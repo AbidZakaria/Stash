@@ -1,0 +1,16 @@
+{
+  "name": "pocketstash",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Offline pocket budget. The web app is the source; Capacitor wraps it into an Android APK in CI.",
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/filesystem": "^7.0.0",
+    "@capacitor/share": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5"
+  }
+}

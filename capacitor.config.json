@@ -1,0 +1,8 @@
+{
+  "appId": "com.pocketstash.app",
+  "appName": "PocketStash",
+  "webDir": "www",
+  "android": {
+    "adjustMarginsForEdgeToEdge": "force"
+  }
+}

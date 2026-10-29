@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>PocketStash</title>
+  <meta name="description" content="Offline pocket budget: colorful stashes, moves, items and Echo.">
+  <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="PocketStash">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <button class="echo-wrap" id="echo" aria-label="Echo, your stash buddy. Tap for a thought.">
+        <svg class="echo" viewBox="0 0 120 72" aria-hidden="true">
+          <g class="brows">
+            <path class="brow brow-l" d="M29 13 L47 13" />
+            <path class="brow brow-r" d="M73 13 L91 13" />
+          </g>
+          <g class="eyes">
+            <g class="eye eye-l">
+              <rect class="eye-shape" x="30" y="21" width="16" height="26" rx="8" />
+              <path class="eye-happy" d="M29 38 Q38 26 47 38" />
+              <circle class="glint" cx="41" cy="27" r="2.6" />
+            </g>
+            <g class="eye eye-r">
+              <rect class="eye-shape" x="74" y="21" width="16" height="26" rx="8" />
+              <path class="eye-happy" d="M73 38 Q82 26 91 38" />
+              <circle class="glint" cx="85" cy="27" r="2.6" />
+            </g>
+          </g>
+          <path class="mouth" d="M53 58 Q60 63 67 58" />
+          <ellipse class="mouth-o" cx="60" cy="60" rx="4" ry="5" />
+        </svg>
+      </button>
+      <div class="bubble" id="bubble" role="status" aria-live="polite"></div>
+      <button class="icon-btn" id="settingsBtn" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Zm7.43-2.53c.04-.32.07-.64.07-.97s-.03-.66-.07-1l2.11-1.63a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.61-.22l-2.49 1a7.3 7.3 0 0 0-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.38 2.650c-.61.25-1.17.58-1.69.98l-2.49-1a.5.5 0 0 0-.61.22l-2 3.46a.49.49 0 0 0 .12.64L4.57 11c-.04.34-.07.67-.07 1s.03.65.07.97l-2.11 1.66a.49.49 0 0 0-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.080.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65a7.3 7.3 0 0 0 1.69-.98l2.49 1.010c.22.08.49 0 .61-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.66Z"/></svg>
+      </button>
+    </header>
+
+    <main id="view"></main>
+
+    <nav class="actionbar" id="actionbar" aria-label="Quick actions">
+      <button class="act act-add" data-act="add"><span class="act-ico">+</span>Add</button>
+      <button class="act act-sub" data-act="sub"><span class="act-ico">−</span>Spend</button>
+      <button class="act act-move" data-act="move"><span class="act-ico">⇄</span>Move</button>
+    </nav>
+  </div>
+
+  <div id="sheetRoot"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <input type="file" id="fileCamera" accept="image/*" capture="environment" hidden>
+  <input type="file" id="fileGallery" accept="image/*" multiple hidden>
+  <input type="file" id="fileImport" accept="application/json,.json" hidden>
+
+  <script src="app.js"></script>
+</body>
+</html>
