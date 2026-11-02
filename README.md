@@ -4,10 +4,20 @@ A pocket budget for your phone that works fully offline. No account, no ads, no 
 and nothing you enter ever leaves your phone.
 
 - Split your money into colored stashes
-- Add, spend and move money, with reasons and photos
+- Keep separate accounts (personal, business, a partner, a kid), each with its own stashes
+- Add, spend and move money, with reasons and photos. Spending is sorted into categories automatically,
+  and it learns from your corrections
 - Keep track of items you're flipping
 - See where it all goes with charts
-- Echo, a small companion who comments on what you do (you can turn this off in Settings)
+- Echo, a small companion who comments on what you do. Hold Echo to switch modes:
+  - **Buddy**: the classic Echo
+  - **Coach**: asks about your pay, home and debts, finds your Baby Step (the 7 Baby Steps popularized
+    by Dave Ramsey), and walks it with you: a map, a to-do list, milestones and a debt snowball planner
+  - **Advisor**: grades each month against healthy spending guidelines and helps you make a zero-based plan
+- A built-in book of short money lessons, and calculators for emergency funds, houses, cars and investing
+- Everything is plain rules and math on your phone. No AI, no internet.
+
+PocketStash isn't affiliated with Ramsey Solutions. The lessons are general education, not personal advice.
 
 ## Download for Android
 
@@ -23,8 +33,8 @@ There's no iPhone download.
 ## Backups
 
 Everything lives only on your phone, so nobody can recover it for you. **Settings → Save backup**
-exports one `.json` file with your photos included. **Restore** loads it back, on the same
-phone or a new one.
+exports one `.json` file with every account and your photos included. **Restore** loads it back, on the same
+phone or a new one. A backup from an older version restores into the account that's open.
 
 Uninstalling the app or clearing its data erases everything, so save a backup now and then.
 
@@ -36,7 +46,9 @@ Plain HTML/CSS/JS, no build step, no dependencies.
 |---|---|
 | `index.html` | Shell + Echo's face |
 | `styles.css` | Everything visual, light/dark |
-| `app.js` | State, views, sheets, charts, Echo, tutorial, backup |
+| `app.js` | State, accounts, categories, views, sheets, charts, Echo, tutorial, backup |
+| `coach.js` | Echo's modes and hold menu, Coach (Baby Steps, debts, milestones), plan, Advisor check-up, tools |
+| `book.js` | The lessons |
 | `sw.js` | Offline cache |
 | `manifest.webmanifest`, `icons/` | Home-screen install |
 

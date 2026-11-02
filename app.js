@@ -37,22 +37,71 @@ const TYPE = {
   sell: { ico: '🏷️', label: 'Sold' },
 };
 
+// What a spend was for. Drives Advisor's check-up and the monthly plan.
+const CATS = {
+  housing: { icon: '🏠', name: 'Housing' },
+  utilities: { icon: '💡', name: 'Bills & utilities' },
+  food: { icon: '🛒', name: 'Groceries' },
+  eatout: { icon: '🍔', name: 'Eating out' },
+  transport: { icon: '🚗', name: 'Transport' },
+  health: { icon: '💊', name: 'Health' },
+  insurance: { icon: '🛡️', name: 'Insurance' },
+  debt: { icon: '💳', name: 'Debt payments' },
+  kids: { icon: '🧸', name: 'Kids' },
+  personal: { icon: '👕', name: 'Personal' },
+  fun: { icon: '🎉', name: 'Fun' },
+  giving: { icon: '🤲', name: 'Giving' },
+  other: { icon: '📦', name: 'Other' },
+};
+
 // ---------- state ----------
+// Each person-level account (a "profile" here, since a stash is S.accounts in the code)
+// keeps its own state under its own key. The first one uses the original key.
 const KEY = 'pocketstash.v1';
+const PKEY = 'pocketstash.profiles';
+const stateKey = id => id === 'main' ? KEY : `${KEY}.${id}`;
 const defaults = () => ({
   v: 1,
-  settings: { currency: '$', theme: 'auto', view: 'all', talk: true, tutorialDone: false },
+  settings: { currency: '$', view: 'all' },
   accounts: [], // {id, name, icon, color, goal, createdAt}
-  tx: [],       // {id, type, acc, to?, amount, reason, details, photos[], date, itemId?}
+  tx: [],       // {id, type, acc, to?, amount, reason, details, photos[], date, itemId?, cat?, debtId?}
   items: [],    // {id, acc, name, cost, value, tag, status, boughtAt, soldAt?, soldPrice?, notes, photos[]}
   tags: ['Inventory', 'Gift card', 'Owed to me'],
+  debts: [],    // {id, name, kind, base, baseAt, original, min, rate, createdAt, paidAt?}
+  money: null,  // Coach's answers: work, income, expenses, home, kids, ef stash, …
+  plan: { income: 0, lines: {}, month: '' },
+  milestones: {},
+  catMemory: { phrases: {}, words: {} },
+  coach: {},
 });
-let S = load();
-const ui = { range: '3M', itemTab: 'holding' };
+const PREFS = () => ({ theme: 'auto', talk: true, tutorialDone: false, mode: 'buddy', read: {} });
+const PROFILE_ICONS = ['🙂', '😎', '👩', '👨', '🧒', '👵', '👴', '💼', '🏪', '🏠', '👪', '🎓', '🐷', '💰', '🌱', '⭐'];
+let P = loadProfiles();
+let S = load(P.active);
+const ui = { range: '3M', itemTab: 'holding', ck: 'month' };
 
-function load() {
+function loadProfiles() {
   try {
-    const raw = localStorage.getItem(KEY);
+    const p = JSON.parse(localStorage.getItem(PKEY) || 'null');
+    if (p && p.list && p.list.length) return { ...p, prefs: { ...PREFS(), ...p.prefs } };
+  } catch (e) { /* rebuild below */ }
+  // First run after the update: the existing data becomes the first account.
+  let old = {};
+  try { old = (JSON.parse(localStorage.getItem(KEY) || '{}') || {}).settings || {}; } catch (e) { /* none */ }
+  return {
+    active: 'main',
+    list: [{ id: 'main', name: 'Personal', icon: '🙂', color: '#2a78d6', createdAt: Date.now() }],
+    prefs: { ...PREFS(), theme: old.theme || 'auto', talk: old.talk !== false, tutorialDone: !!old.tutorialDone },
+  };
+}
+function saveProfiles() {
+  try { localStorage.setItem(PKEY, JSON.stringify(P)); } catch (e) { /* save() reports storage trouble */ }
+}
+const profById = id => P.list.find(p => p.id === id);
+
+function load(id) {
+  try {
+    const raw = localStorage.getItem(stateKey(id));
     if (raw) return normalize(JSON.parse(raw));
   } catch (e) { /* fall through to fresh state */ }
   return defaults();
@@ -62,10 +111,68 @@ function normalize(d) {
   return { ...base, ...d, settings: { ...base.settings, ...(d.settings || {}) } };
 }
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(S)); }
+  try { localStorage.setItem(stateKey(P.active), JSON.stringify(S)); saveProfiles(); }
   catch (e) { toast('Could not save. Is the phone storage full?'); }
 }
-function commit() { save(); route(); }
+function commit() { save(); checkMilestones(); route(); }
+
+// ---------- categories ----------
+// Keyword guesses in English, French and Darija, plus whatever this account taught it:
+// each time you pick a category, the words in that reason count toward it.
+const CAT_WORDS = {
+  debt: 'loan loans debt credit installment repayment remboursement pret dette traite salaf wafasalaf cetelem eqdom klarna afterpay bnpl tabby tamara affirm',
+  insurance: 'insurance assurance premium mutuelle amo cnops cnss wafa saham axa allianz',
+  giving: 'charity donation donate zakat sadaqa sadaka tithe church mosque mosquee masjid aumone ngo',
+  housing: 'rent mortgage landlord lease apartment hoa loyer hypotheque syndic kra kira كراء',
+  utilities: 'electricity electric power water wifi internet phone mobile bill bills recharge lydec redal amendis radeef onee iam inwi orange telecom fibre adsl electricite eau facture gaz butane heating',
+  health: 'doctor medecin pharmacy pharmacie medicine medicament dentist dentiste hospital hopital clinic clinique analyses lab therapy gym glasses lunettes',
+  kids: 'school ecole tuition daycare creche nursery babysitter kids diapers couches toys jouets fournitures',
+  eatout: 'restaurant resto cafe coffee starbucks mcdonald mcdo kfc burger burgers pizza tacos snack takeout takeaway delivery glovo eats lunch dinner dejeuner brunch bar drinks',
+  food: 'grocery groceries supermarket market marjane carrefour bim acima aswak hanout souk marche courses epicerie bread khobz pain milk lait vegetables legumes fruit fruits meat viande poulet chicken fish poisson lidl aldi walmart costco kroger tesco',
+  transport: 'fuel gas gasoline petrol essence gasoil diesel taxi uber careem indrive bus tram train oncf metro parking toll peage autoroute car voiture garage mechanic vidange tires pneu',
+  fun: 'movie movies cinema netflix spotify game games playstation steam concert party fete vacation trip holiday vacances voyage hotel travel airbnb bowling football match hobby',
+  personal: 'clothes clothing vetements shoes chaussures haircut barber coiffeur hammam cosmetics makeup subscription zara decathlon gift cadeau',
+};
+const CAT_ORDER = Object.keys(CAT_WORDS);
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const tokens = s => norm(s).split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 1 && !/^\d+$/.test(w));
+const CAT_INDEX = new Map();
+for (const [c, words] of Object.entries(CAT_WORDS)) for (const w of words.split(' ')) if (!CAT_INDEX.has(norm(w))) CAT_INDEX.set(norm(w), c);
+
+function guessCat(reason) {
+  const r = norm(reason).trim();
+  if (!r) return null;
+  const mem = S.catMemory || {};
+  if (mem.phrases && mem.phrases[r]) return mem.phrases[r];
+  const score = {};
+  const bump = (c, v) => { score[c] = (score[c] || 0) + v; };
+  for (const w of tokens(r)) {
+    const seen = mem.words && mem.words[w];
+    if (seen) {
+      const total = Object.values(seen).reduce((a, b) => a + b, 0);
+      for (const [c, n] of Object.entries(seen)) bump(c, 3 * n / total);
+    }
+    const hit = CAT_INDEX.get(w) || CAT_INDEX.get(w.replace(/(es|s)$/, ''));
+    if (hit) bump(hit, 2);
+    else if (w.length >= 4) for (const [k, c] of CAT_INDEX) if (k.length >= 4 && (w.startsWith(k) || k.startsWith(w))) { bump(c, 1); break; }
+  }
+  let best = null;
+  for (const c of [...CAT_ORDER, 'other']) if (score[c] && (!best || score[c] > score[best])) best = c;
+  return best && score[best] >= 1 ? best : null;
+}
+function learnCat(reason, cat) {
+  const r = norm(reason).trim();
+  if (!r || !CATS[cat]) return;
+  const mem = S.catMemory = { phrases: {}, words: {}, ...S.catMemory };
+  mem.phrases[r] = cat;
+  for (const w of tokens(r)) {
+    const seen = mem.words[w] = mem.words[w] || {};
+    seen[cat] = (seen[cat] || 0) + 1;
+  }
+}
+const catOf = t => (t.cat && CATS[t.cat]) ? t.cat : guessCat(t.reason) || 'other';
+// Pages other files add: name → { view(parts), wire(root, parts), bar }.
+const PAGES = {};
 
 // ---------- photos (IndexedDB) ----------
 const Photos = (() => {
@@ -158,8 +265,7 @@ function viewPhoto(id) {
 }
 
 // ---------- money + dates ----------
-function fmt(n, sign = false) {
-  const sym = S.settings.currency;
+function fmt(n, sign = false, sym = S.settings.currency) {
   const abs = Math.abs(n);
   const dec = Math.abs(abs - Math.round(abs)) > 0.004 ? 2 : 0;
   const num = abs.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -354,7 +460,7 @@ function makeEcho(svg, bubble) {
 const echo = makeEcho($('#echo .echo'), $('#bubble'));
 
 function react(text, mood = 'happy', ms) {
-  if (S.settings.talk) echo.say(text, mood, ms);
+  if (P.prefs.talk) echo.say(text, mood, ms);
   else echo.set(mood, ms || 2500);
 }
 
@@ -401,9 +507,9 @@ setInterval(() => {
   }
 }, 3000);
 
-$('#echo').addEventListener('click', () => {
-  echo.set('thinking', 500);
-  setTimeout(() => echo.say(insight(), 'proud', 4200), 250);
+// Long-presses shouldn't pop up copy menus; text fields keep theirs.
+document.addEventListener('contextmenu', ev => {
+  if (!ev.target.closest('input, textarea')) ev.preventDefault();
 });
 
 // ---------- toast ----------
@@ -511,10 +617,11 @@ function route() {
   if (parts[0] === 'acc' && accById(parts[1])) { view.innerHTML = accountView(accById(parts[1])); page = 'acc'; }
   else if (parts[0] === 'summary') { view.innerHTML = summaryView(); page = 'summary'; }
   else if (parts[0] === 'settings') { view.innerHTML = settingsView(); page = 'settings'; }
+  else if (PAGES[parts[0]]) { view.innerHTML = PAGES[parts[0]].view(parts); page = parts[0]; }
   else view.innerHTML = homeView();
-  $('#actionbar').classList.toggle('hidden', page === 'settings' || !S.accounts.length);
+  $('#actionbar').classList.toggle('hidden', page === 'settings' || !S.accounts.length || (PAGES[page] && !PAGES[page].bar));
   if (path !== lastPath) { scrollTo(0, 0); lastPath = path; }
-  wire(view, page);
+  wire(view, page, parts);
   hydratePhotos(view);
   drawCharts();
 }
@@ -559,7 +666,7 @@ function txRow(t, ctx) {
   const title = t.reason || TYPE[t.type].label;
   const lead = t.photos && t.photos.length
     ? `<img class="thumb" data-photo="${h(t.photos[0])}" alt="">`
-    : `<span class="li-ico" style="background:color-mix(in srgb, ${a.color} 22%, transparent)">${t.type === 'move' ? '⇄' : h(a.icon)}</span>`;
+    : `<span class="li-ico" style="background:color-mix(in srgb, ${a.color} 22%, transparent)">${t.type === 'move' ? '⇄' : t.type === 'sub' ? CATS[catOf(t)].icon : h(a.icon)}</span>`;
   return `<button class="li" data-tx="${t.id}">${lead}
     <div class="li-main"><div class="li-title">${h(title)}</div><div class="li-sub">${h(where)} · ${fmtTime(t.date)}${extras}</div></div>
     <div class="li-amt num ${cls}">${shown}</div></button>`;
@@ -583,7 +690,9 @@ function homeView() {
   const net = m.in - m.out;
   const things = valueOf(null, 'assets');
   const recent = sortedTx(() => true).slice(0, 8);
+  const me = profById(P.active);
   return `
+  <button class="acct-pill" id="acctPill"><span class="ap-ico" style="--c:${me.color}">${h(me.icon)}</span><span class="ap-name">${h(me.name)}</span><span class="caret">▾</span></button>
   <section class="card summary">
     <div class="row between"><span class="label">${h(viewLabel(v))}</span><a class="link" href="#/summary">Summary ›</a></div>
     <div class="big num">${fmt(valueOf(null, v))}</div>
@@ -595,6 +704,7 @@ function homeView() {
     <a class="spark" href="#/summary" aria-label="Open summary">${chartSlot(series(null, v, rangeFrom('1M')), { mini: true, color: 'var(--accent)' })}</a>
     ${viewChips()}
   </section>
+  ${modeCard()}
   <div class="sec-title"><span>Your stashes</span></div>
   <div class="tiles">
     ${S.accounts.map(tileHTML).join('')}
@@ -679,16 +789,15 @@ function summaryView() {
   const segTotal = segs.reduce((s, x) => s + x.v, 0) || 1;
   const segColor = i => `var(--s${(i % 8) + 1})`;
 
-  // where spending went this month, grouped by reason
+  // where spending went this month, grouped by category
   const spend = new Map();
   for (const t of S.tx) if (t.type === 'sub' && t.date >= startOfMonth()) {
-    const label = (t.reason || 'No reason').trim();
-    const k = label.toLowerCase();
-    const cur = spend.get(k) || { label, v: 0 };
+    const c = catOf(t);
+    const cur = spend.get(c) || { label: `${CATS[c].icon} ${CATS[c].name}`, v: 0 };
     cur.v += t.amount;
-    spend.set(k, cur);
+    spend.set(c, cur);
   }
-  const topSpend = [...spend.values()].sort((a, b) => b.v - a.v).slice(0, 6);
+  const topSpend = [...spend.values()].sort((a, b) => b.v - a.v);
   const maxSpend = Math.max(1, ...topSpend.map(x => x.v));
 
   return `
@@ -735,8 +844,21 @@ function summaryView() {
 
 function settingsView() {
   const st = S.settings;
+  const me = profById(P.active);
   return `
   <button class="back" data-go="/">‹ Home</button>
+  <section class="card">
+    <h3>Account</h3>
+    <button class="li" id="acctOpen"><span class="li-ico" style="background:${me.color}">${h(me.icon)}</span>
+      <div class="li-main"><div class="li-title">${h(me.name)}</div><div class="li-sub">${P.list.length} account${P.list.length > 1 ? 's' : ''} on this phone · tap to switch or add</div></div><span class="muted">›</span></button>
+  </section>
+  <section class="card">
+    <h3>Echo</h3>
+    <div class="chips">${Object.entries(MODES).map(([k, m]) => `<button class="chip ${mode() === k ? 'on' : ''}" data-mode-set="${k}">${m.ico} ${m.name}</button>`).join('')}</div>
+    <p class="label" style="margin:8px 0 0">Buddy is the classic Echo. Coach walks the 7 Baby Steps with you. Advisor grades your spending. Hold Echo anytime to switch.</p>
+    <label class="toggle-row"><span>Echo talks</span><input type="checkbox" class="switch" id="talk" ${P.prefs.talk ? 'checked' : ''}></label>
+    <div class="btn-row"><button class="btn ghost small" data-go="/book">📖 Book</button><button class="btn ghost small" data-go="/tools">🧮 Tools</button><button class="btn ghost small" data-go="/plan">🗂️ Plan</button></div>
+  </section>
   <section class="card">
     <h3>Currency</h3>
     <div class="chips wrap" style="flex-wrap:wrap">${CURRENCIES.map(c => `<button class="chip ${st.currency === c ? 'on' : ''}" data-cur="${h(c)}">${h(c)}</button>`).join('')}</div>
@@ -744,8 +866,7 @@ function settingsView() {
   </section>
   <section class="card">
     <h3>Look</h3>
-    <div class="chips">${['auto', 'light', 'dark'].map(t => `<button class="chip ${st.theme === t ? 'on' : ''}" data-theme-set="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div>
-    <label class="toggle-row"><span>Echo comments on what you do</span><input type="checkbox" class="switch" id="talk" ${st.talk ? 'checked' : ''}></label>
+    <div class="chips">${['auto', 'light', 'dark'].map(t => `<button class="chip ${P.prefs.theme === t ? 'on' : ''}" data-theme-set="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div>
   </section>
   <section class="card">
     <h3>Item tags</h3>
@@ -755,19 +876,20 @@ function settingsView() {
   </section>
   <section class="card">
     <h3>Backup</h3>
-    <p class="label" style="margin-top:-4px">Everything lives only on this phone. Save a backup file once in a while.</p>
+    <p class="label" style="margin-top:-4px">Everything lives only on this phone. One backup file holds every account. Save one once in a while.</p>
     <div class="btn-row"><button class="btn ghost" id="export">Save backup</button><button class="btn ghost" id="import">Restore</button></div>
     <p class="label" id="usage" style="margin:10px 0 0"></p>
   </section>
   <section class="card">
     <button class="btn ghost" id="replay">Replay the tutorial</button>
+    ${P.list.length > 1 ? `<button class="btn danger" id="wipeOne" style="margin-top:6px">Erase “${h(me.name)}”</button>` : ''}
     <button class="btn danger" id="wipe" style="margin-top:6px">Erase everything</button>
   </section>
   <p class="label" style="text-align:center">PocketStash · offline · no account · no tracking</p>`;
 }
 
 // ---------- wiring ----------
-function wire(root, page) {
+function wire(root, page, parts) {
   $$('[data-acc]', root).forEach(b => b.onclick = () => go('/acc/' + b.dataset.acc));
   $$('[data-go]', root).forEach(b => b.onclick = () => go(b.dataset.go));
   $$('[data-tx]', root).forEach(b => b.onclick = () => txDetail(b.dataset.tx));
@@ -777,6 +899,9 @@ function wire(root, page) {
   $$('[data-itab]', root).forEach(b => b.onclick = () => { ui.itemTab = b.dataset.itab; route(); });
   const na = $('#newAcc', root);
   if (na) na.onclick = () => accountSheet();
+  const pill = $('#acctPill', root);
+  if (pill) pill.onclick = profilesSheet;
+  if (PAGES[page] && PAGES[page].wire) PAGES[page].wire(root, parts);
 
   if (page === 'acc') {
     const id = currentAccId();
@@ -793,8 +918,10 @@ $('#settingsBtn').onclick = () => go('/settings');
 function wireSettings(root) {
   $$('[data-cur]', root).forEach(b => b.onclick = () => { S.settings.currency = b.dataset.cur; commit(); });
   $('#curCustom', root).onchange = e => { const v = e.target.value.trim(); if (v) { S.settings.currency = v; commit(); } };
-  $$('[data-theme-set]', root).forEach(b => b.onclick = () => { S.settings.theme = b.dataset.themeSet; applyTheme(); commit(); });
-  $('#talk', root).onchange = e => { S.settings.talk = e.target.checked; save(); if (e.target.checked) react('Yay, I can talk again.', 'happy'); };
+  $$('[data-theme-set]', root).forEach(b => b.onclick = () => { P.prefs.theme = b.dataset.themeSet; applyTheme(); commit(); });
+  $('#talk', root).onchange = e => { P.prefs.talk = e.target.checked; saveProfiles(); if (e.target.checked) react('Yay, I can talk again.', 'happy'); };
+  $$('[data-mode-set]', root).forEach(b => b.onclick = () => setMode(b.dataset.modeSet));
+  $('#acctOpen', root).onclick = profilesSheet;
   $$('[data-deltag]', root).forEach(b => b.onclick = () => {
     const t = b.dataset.deltag;
     if (S.items.some(i => i.tag === t)) return toast(`Some items still use "${t}"`);
@@ -810,13 +937,23 @@ function wireSettings(root) {
   $('#import', root).onclick = importBackup;
   $('#replay', root).onclick = () => tutorial(true);
   $('#wipe', root).onclick = async () => {
-    if (!confirm('Erase ALL stashes, history and photos from this phone?')) return;
+    if (!confirm(`Erase ALL ${P.list.length > 1 ? 'accounts, ' : ''}stashes, history and photos from this phone?`)) return;
     if (!confirm('Really? This cannot be undone (unless you saved a backup).')) return;
     await Photos.clear();
+    for (const p of P.list) localStorage.removeItem(stateKey(p.id));
+    const prefs = { ...P.prefs, tutorialDone: true, read: {} };
+    localStorage.removeItem(PKEY);
+    P = loadProfiles();
+    P.prefs = prefs;
     S = defaults();
-    S.settings.tutorialDone = true;
     commit();
     react('Fresh start. I like it.', 'surprised');
+  };
+  const one = $('#wipeOne', root);
+  if (one) one.onclick = () => {
+    const me = profById(P.active);
+    if (!confirm(`Erase the account “${me.name}” with all its stashes, history and photos? Other accounts stay.`)) return;
+    deleteProfile(me.id);
   };
   if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(e => {
     const el = $('#usage', root);
@@ -913,8 +1050,14 @@ function txSheet(type, preset = {}) {
   const st = photoState();
   st.acc = preset.acc || S.settings['last_' + type];
   if (!accById(st.acc)) st.acc = S.accounts[0].id;
-  if (type === 'move') st.to = (S.accounts.find(a => a.id !== st.acc) || {}).id;
+  if (type === 'move') {
+    if (st.acc === preset.to) st.acc = (S.accounts.find(a => a.id !== preset.to) || {}).id;
+    st.to = accById(preset.to) && preset.to !== st.acc ? preset.to : (S.accounts.find(a => a.id !== st.acc) || {}).id;
+  }
   st.date = null;
+  st.cat = preset.cat || null;
+  st.catPicked = !!preset.cat;
+  st.debtId = preset.debtId || null;
   const reasons = recentReasons(type);
 
   openSheet(`
@@ -924,9 +1067,11 @@ function txSheet(type, preset = {}) {
     <div class="field"><span class="label">${type === 'add' ? 'Into' : 'From'}</span><div class="pick" id="pickA"></div></div>
     ${type === 'move' ? '<div class="field"><span class="label">To</span><div class="pick" id="pickB"></div></div>' : ''}
     <div class="field"><span class="label">Reason <span class="muted">(optional)</span></span>
-      <input class="input" id="reason" maxlength="80" placeholder="${h(holders[type])}">
+      <input class="input" id="reason" maxlength="80" placeholder="${h(holders[type])}" value="${h(preset.reason || '')}">
       ${reasons.length ? `<div class="chips" style="margin-top:8px">${reasons.map(r => `<button class="chip" data-r="${h(r)}">${h(r)}</button>`).join('')}</div>` : ''}
     </div>
+    ${type === 'sub' ? `<div class="field"><span class="label">What for? <span class="muted" id="catHint"></span></span>
+      <div class="chips" id="cats"></div><div class="pick hidden" id="pickDebt" style="margin-top:8px"></div></div>` : ''}
     <div class="field">
       <button class="link" id="detailsBtn">+ Add details</button>
       <textarea class="textarea hidden" id="details" placeholder="The whole story, if you want."></textarea>
@@ -952,7 +1097,28 @@ function txSheet(type, preset = {}) {
     };
     drawPicks();
     wirePhotos(sh, st);
-    $$('[data-r]', sh).forEach(b => b.onclick = () => { $('#reason', sh).value = b.dataset.r; });
+    const drawCats = () => {
+      if (type !== 'sub') return;
+      const box = $('#cats', sh);
+      box.innerHTML = Object.entries(CATS).map(([k, c]) => `<button class="chip ${st.cat === k ? 'on' : ''}" data-cat="${k}">${c.icon} ${h(c.name)}</button>`).join('');
+      $$('[data-cat]', box).forEach(b => b.onclick = () => { st.cat = b.dataset.cat; st.catPicked = true; drawCats(); });
+      $('#catHint', sh).textContent = st.cat && !st.catPicked ? '(my guess)' : '';
+      const on = $('.chip.on', box);
+      if (on) box.scrollLeft = on.offsetLeft - box.offsetLeft - 8;
+      // Debt payments say which debt; the smallest (the snowball target) is the default.
+      const debts = [...openDebts(), ...openDebts(true)], pd = $('#pickDebt', sh);
+      pd.classList.toggle('hidden', st.cat !== 'debt' || !debts.length);
+      if (st.cat !== 'debt' || !debts.length) return;
+      if (!debts.some(d => d.id === st.debtId)) st.debtId = debts[0].id;
+      pd.innerHTML = debts.map(d => `<button data-debt-pick="${d.id}" class="${d.id === st.debtId ? 'on' : ''}">
+        <span class="dot" style="--c:var(--surface-2)">${DEBT_KINDS[d.kind][0]}</span><span>${h(d.name)}<br><span class="amt num">${fmt(debtBal(d))} left</span></span></button>`).join('');
+      $$('[data-debt-pick]', pd).forEach(b => b.onclick = () => { st.debtId = b.dataset.debtPick; drawCats(); });
+    };
+    const guess = () => { if (type === 'sub' && !st.catPicked) { st.cat = guessCat($('#reason', sh).value); drawCats(); } };
+    drawCats();
+    guess();
+    $('#reason', sh).oninput = guess;
+    $$('[data-r]', sh).forEach(b => b.onclick = () => { $('#reason', sh).value = b.dataset.r; guess(); });
     $('#detailsBtn', sh).onclick = e => { e.target.remove(); $('#details', sh).classList.remove('hidden'); $('#details', sh).focus(); };
     $('#when', sh).onclick = () => {
       const d = $('#date', sh);
@@ -975,6 +1141,11 @@ function txSheet(type, preset = {}) {
         photos: st.photos, date: st.date || Date.now(),
       };
       if (type === 'move') t.to = st.to;
+      if (type === 'sub') {
+        t.cat = st.cat || guessCat(t.reason) || 'other';
+        if (t.cat === 'debt' && st.debtId) t.debtId = st.debtId;
+        if (st.catPicked && t.reason) learnCat(t.reason, t.cat);
+      }
       const before = { cash: cashOf(st.acc), total: valueOf(st.acc, 'all'), toTotal: t.to ? valueOf(t.to, 'all') : 0 };
       S.tx.push(t);
       S.settings['last_' + type] = st.acc;
@@ -1005,7 +1176,8 @@ function afterTx(t, before) {
   const amt = fmt(t.amount);
   pulse(t.acc);
   if (b) setTimeout(() => pulse(t.to), 250);
-  if (t.type === 'add') {
+  if (modeReact(t, before)) { /* Coach or Advisor had something to say */ }
+  else if (t.type === 'add') {
     if (goalHit(t.acc, before.total)) react(`${a.name} hit its goal! 🎉`, 'proud', 5000);
     else react(pickOne([`Nice! ${amt} into ${a.name}.`, `${a.name} just got heavier. ${amt} 🌱`, `Ooh, ${amt}. I saw that.`, `Logged: ${amt} → ${a.name}.`]), 'happy');
   } else if (t.type === 'sub') {
@@ -1043,6 +1215,7 @@ function txDetail(id, editing = false) {
         <div class="kv"><span>${b ? 'From → To' : 'Stash'}</span><span>${h(b ? `${a.name} → ${b.name}` : a.name)}</span></div>
         <div class="kv"><span>When</span><span>${h(fmtDay(t.date))}, ${h(fmtTime(t.date))}</span></div>
         <div class="kv"><span>Reason</span><span>${h(t.reason || '—')}</span></div>
+        ${t.type === 'sub' ? `<div class="kv"><span>What for</span><span>${CATS[catOf(t)].icon} ${h(CATS[catOf(t)].name)}${t.debtId && debtById(t.debtId) ? ` · ${h(debtById(t.debtId).name)}` : ''}</span></div>` : ''}
       </section>
       ${t.details ? `<div class="field"><span class="label">Details</span><div class="details-text">${h(t.details)}</div></div>` : ''}
       ${t.photos && t.photos.length ? `<div class="field"><div class="photos">${t.photos.map(p => `<img data-photo="${h(p)}" data-view="${h(p)}" alt="" style="width:96px;height:96px">`).join('')}</div></div>` : ''}
@@ -1071,6 +1244,7 @@ function txDetail(id, editing = false) {
       <input class="amount num" id="amt" inputmode="decimal" value="${t.amount}" ${t.itemId ? 'disabled' : ''} aria-label="Amount"></div>
       ${t.itemId ? '<span class="label">Change the price from the item itself.</span>' : ''}</div>
     <div class="field"><span class="label">Reason</span><input class="input" id="reason" maxlength="80" value="${h(t.reason)}"></div>
+    ${t.type === 'sub' ? '<div class="field"><span class="label">What for?</span><div class="chips" id="cats"></div></div>' : ''}
     <div class="field"><span class="label">Details</span><textarea class="textarea" id="details">${h(t.details)}</textarea></div>
     <div class="field"><span class="label">When</span><input type="datetime-local" class="input" id="date" value="${toLocalInput(t.date)}"></div>
     <div class="field"><div class="row wrap"><button class="btn ghost small" id="cam">📷 Camera</button><button class="btn ghost small" id="gal">🖼️ Photo</button></div>
@@ -1078,7 +1252,22 @@ function txDetail(id, editing = false) {
     <button class="btn" id="save">Save changes</button>`, (sh, ctl) => {
     ctl.onClose = () => finishPhotos(st);
     wirePhotos(sh, st);
+    let cat = t.type === 'sub' ? catOf(t) : null, picked = false;
+    const drawCats = () => {
+      const box = $('#cats', sh);
+      if (!box) return;
+      box.innerHTML = Object.entries(CATS).map(([k, c]) => `<button class="chip ${cat === k ? 'on' : ''}" data-cat="${k}">${c.icon} ${h(c.name)}</button>`).join('');
+      $$('[data-cat]', box).forEach(b => b.onclick = () => { cat = b.dataset.cat; picked = true; drawCats(); });
+      const on = $('.chip.on', box);
+      if (on) box.scrollLeft = on.offsetLeft - box.offsetLeft - 8;
+    };
+    drawCats();
     $('#save', sh).onclick = () => {
+      if (cat) {
+        if (picked && cat !== t.cat) learnCat($('#reason', sh).value.trim(), cat);
+        t.cat = cat;
+        if (cat !== 'debt') delete t.debtId;
+      }
       if (!t.itemId) {
         const v = parseAmt($('#amt', sh).value);
         if (!(v > 0)) return toast('Amount must be above zero');
@@ -1177,6 +1366,118 @@ function deleteAccount(id) {
   S.items = S.items.filter(i => i.acc !== id);
   S.accounts = S.accounts.filter(a => a.id !== id);
   save();
+}
+
+// ----- accounts (profiles) -----
+const stateTotal = st => round2(st.tx.reduce((s, t) => s + netDelta(t), 0) +
+  st.items.filter(i => i.status === 'holding').reduce((s, i) => s + i.value, 0));
+const statePhotos = st => [...st.tx, ...st.items].flatMap(x => x.photos || []);
+
+function profilesSheet() {
+  save();
+  openSheet(`
+    <div class="sheet-head"><h2>Accounts</h2><button class="x" data-close aria-label="Close">✕</button></div>
+    <p class="label" style="margin-top:-6px">Each account has its own stashes, history, plan and Echo coaching. Handy for personal vs. business, a partner, or a kid.</p>
+    <div class="list card" style="padding:4px 14px">${P.list.map(p => {
+      const st = p.id === P.active ? S : load(p.id);
+      return `<div class="acct-row">
+        <button class="li" data-prof="${p.id}"><span class="li-ico" style="background:${p.color}">${h(p.icon)}</span>
+          <div class="li-main"><div class="li-title">${h(p.name)}${p.id === P.active ? ' <span class="muted">· open</span>' : ''}</div>
+          <div class="li-sub">${st.accounts.length} stash${st.accounts.length === 1 ? '' : 'es'}</div></div>
+          <div class="li-amt num">${fmt(stateTotal(st), false, st.settings.currency)}</div></button>
+        <button class="acct-edit" data-pedit="${p.id}" aria-label="Edit ${h(p.name)}">✎</button></div>`;
+    }).join('')}</div>
+    <button class="btn ghost" id="newProf" style="margin-top:12px">＋ New account</button>`, sh => {
+    $$('[data-prof]', sh).forEach(b => b.onclick = () => { closeSheet(); if (b.dataset.prof !== P.active) setTimeout(() => switchProfile(b.dataset.prof), 120); });
+    $$('[data-pedit]', sh).forEach(b => b.onclick = () => profileSheet(profById(b.dataset.pedit)));
+    $('#newProf', sh).onclick = () => profileSheet();
+  });
+}
+
+function profileSheet(p) {
+  const isNew = !p;
+  const st = p ? { ...p } : { name: '', icon: PROFILE_ICONS[P.list.length % PROFILE_ICONS.length], color: COLORS[(P.list.length + 3) % COLORS.length],
+    currency: S.settings.currency };
+  const chosen = new Set(['Main', 'Savings']);
+  openSheet(`
+    <div class="sheet-head"><h2>${isNew ? 'New account' : 'Edit account'}</h2><button class="x" data-close aria-label="Close">✕</button></div>
+    <div class="field"><span class="label">Name</span><input class="input" id="name" maxlength="24" placeholder="Business, Sara, Family…" value="${h(st.name)}"></div>
+    <div class="field"><span class="label">Icon</span><div class="icons" id="icons"></div></div>
+    <div class="field"><span class="label">Color</span><div class="swatches" id="sw"></div></div>
+    ${isNew ? `<div class="field"><span class="label">Currency</span><div class="chips" style="flex-wrap:wrap">${CURRENCIES.map(c =>
+      `<button class="chip ${st.currency === c ? 'on' : ''}" data-cur="${h(c)}">${h(c)}</button>`).join('')}</div></div>
+    <div class="field"><span class="label">Start with these stashes</span><div class="chips" style="flex-wrap:wrap">${TEMPLATES.map(t =>
+      `<button class="chip ${chosen.has(t.name) ? 'on' : ''}" data-st="${h(t.name)}">${t.icon} ${h(t.name)}</button>`).join('')}</div></div>` : ''}
+    <button class="btn" id="save">${isNew ? 'Create account' : 'Save'}</button>
+    ${!isNew && P.list.length > 1 ? '<button class="btn danger" id="del" style="margin-top:8px">Delete account</button>' : ''}`, sh => {
+    const draw = () => {
+      $('#icons', sh).innerHTML = PROFILE_ICONS.map(i => `<button class="${i === st.icon ? 'on' : ''}" data-ic="${i}">${i}</button>`).join('');
+      $('#sw', sh).innerHTML = COLORS.map(c => `<button class="${c === st.color ? 'on' : ''}" style="--c:${c}" data-c="${c}" aria-label="Color"></button>`).join('');
+      $$('[data-ic]', sh).forEach(b => b.onclick = () => { st.icon = b.dataset.ic; draw(); });
+      $$('[data-c]', sh).forEach(b => b.onclick = () => { st.color = b.dataset.c; draw(); });
+    };
+    draw();
+    $$('[data-cur]', sh).forEach(b => b.onclick = () => {
+      st.currency = b.dataset.cur;
+      $$('[data-cur]', sh).forEach(x => x.classList.toggle('on', x === b));
+    });
+    $$('[data-st]', sh).forEach(b => b.onclick = () => {
+      const n = b.dataset.st;
+      chosen.has(n) ? chosen.delete(n) : chosen.add(n);
+      b.classList.toggle('on');
+    });
+    $('#save', sh).onclick = () => {
+      const name = $('#name', sh).value.trim();
+      if (!name) { $('#name', sh).focus(); return toast('Give it a name'); }
+      if (!isNew) {
+        Object.assign(p, { name, icon: st.icon, color: st.color });
+        saveProfiles();
+        closeSheet();
+        route();
+        return;
+      }
+      const np = { id: uid(), name, icon: st.icon, color: st.color, createdAt: Date.now() };
+      const fresh = defaults();
+      fresh.settings.currency = st.currency;
+      TEMPLATES.filter(t => chosen.has(t.name)).forEach(t =>
+        fresh.accounts.push({ id: uid(), name: t.name, icon: t.icon, color: t.color, goal: 0, createdAt: Date.now() }));
+      localStorage.setItem(stateKey(np.id), JSON.stringify(fresh));
+      P.list.push(np);
+      closeSheet();
+      setTimeout(() => switchProfile(np.id), 120);
+    };
+    const del = $('#del', sh);
+    if (del) del.onclick = () => {
+      if (!confirm(`Delete the account “${p.name}” with all its stashes, history and photos? Other accounts stay.`)) return;
+      closeSheet();
+      setTimeout(() => deleteProfile(p.id), 120);
+    };
+  });
+}
+
+function switchProfile(id) {
+  save();
+  P.active = id;
+  S = load(id);
+  saveProfiles();
+  ui.itemTab = 'holding';
+  closeAsk();
+  if (location.hash && location.hash !== '#/') location.replace('#/');
+  route();
+  const p = profById(id);
+  react(`Switched to ${p.name} ${p.icon}`, 'happy');
+}
+
+function deleteProfile(id) {
+  const st = id === P.active ? S : load(id);
+  statePhotos(st).forEach(ph => Photos.del(ph));
+  localStorage.removeItem(stateKey(id));
+  P.list = P.list.filter(p => p.id !== id);
+  if (P.active === id) { P.active = P.list[0].id; S = load(P.active); }
+  saveProfiles();
+  location.replace('#/');
+  route();
+  react('Account gone. Onward.', 'thinking');
 }
 
 // ----- items (assets) -----
@@ -1300,8 +1601,11 @@ async function exportBackup() {
     const b = await Photos.get(k);
     if (b) photos[k] = await blobToDataURL(b);
   }
+  save();
+  const states = {};
+  for (const p of P.list) states[p.id] = p.id === P.active ? S : load(p.id);
   const name = `pocketstash-${new Date().toISOString().slice(0, 10)}.json`;
-  const json = JSON.stringify({ app: 'pocketstash', v: 1, exportedAt: Date.now(), state: S, photos });
+  const json = JSON.stringify({ app: 'pocketstash', v: 2, exportedAt: Date.now(), profiles: P, states, photos });
   if (isNative) {
     // The Android WebView can't download blobs, so write the file natively and open the share sheet.
     const { Filesystem, Share } = window.Capacitor.Plugins;
@@ -1333,12 +1637,41 @@ function importBackup() {
   input.onchange = async () => {
     try {
       const data = JSON.parse(await input.files[0].text());
-      if (data.app !== 'pocketstash' || !data.state) throw new Error('not a backup');
-      if (!confirm('Replace everything on this phone with this backup?')) return;
-      await Photos.clear();
-      for (const [k, url] of Object.entries(data.photos || {})) await Photos.put(k, await (await fetch(url)).blob());
-      S = normalize(data.state);
+      const multi = data.app === 'pocketstash' && data.states && data.profiles && data.profiles.list && data.profiles.list.length;
+      if (data.app !== 'pocketstash' || !(multi || data.state)) throw new Error('not a backup');
+      const putPhotos = async () => {
+        for (const [k, url] of Object.entries(data.photos || {})) await Photos.put(k, await (await fetch(url)).blob());
+      };
+      if (multi) {
+        if (!confirm('Replace every account on this phone with this backup?')) return;
+        await Photos.clear();
+        await putPhotos();
+        for (const p of P.list) localStorage.removeItem(stateKey(p.id));
+        P = { ...data.profiles, prefs: { ...PREFS(), ...data.profiles.prefs } };
+        if (!profById(P.active)) P.active = P.list[0].id;
+        for (const p of P.list) localStorage.setItem(stateKey(p.id), JSON.stringify(data.states[p.id] || defaults()));
+        S = load(P.active);
+      } else {
+        // An older backup holds one account: it replaces the one that's open.
+        const me = profById(P.active);
+        if (!confirm(`Replace the account “${me.name}” with this backup? Other accounts stay as they are.`)) return;
+        // Finish removing this account's photos before writing the backup's, and keep any the
+        // backup also has, so restoring over the same data never loses a photo.
+        const incoming = new Set(Object.keys(data.photos || {}));
+        await Promise.all(statePhotos(S).filter(ph => !incoming.has(ph)).map(ph => Photos.del(ph)));
+        await putPhotos();
+        // Older backups kept look and talk settings inside the account; they're phone-wide now.
+        const { theme, talk, tutorialDone, ...settings } = (data.state && data.state.settings) || {};
+        if (theme) P.prefs.theme = theme;
+        if (typeof talk === 'boolean') P.prefs.talk = talk;
+        P.prefs.tutorialDone = true;
+        S = normalize({ ...data.state, settings });
+      }
+      closeAsk();
+      ui.itemTab = 'holding';
+      if (location.hash && location.hash !== '#/') location.replace('#/');
       applyTheme();
+      applyMode();
       commit();
       react('Welcome back, everything.', 'happy');
     } catch (e) {
@@ -1366,6 +1699,9 @@ function tutorial(replay = false) {
       extra: () => '<div class="mini-acts demo"><span class="pos">+ Add</span><span class="neg">− Spend</span><span style="color:var(--accent)">⇄ Move</span></div>' },
     { title: 'Things count too', mood: 'proud',
       text: 'Flipping Marketplace finds? Add items to a stash and track profit. Switch between everything, cash only, or just items whenever you want.' },
+    { title: 'Hold me', mood: 'surprised',
+      text: "Press and hold me for modes. Coach walks you through the 7 Baby Steps, Advisor grades your spending, and there's a whole book. Buddy is just me, being me.",
+      extra: () => '<div class="mini-acts demo"><span>🙂 Buddy</span><span>🧭 Coach</span><span>🩺 Advisor</span></div>' },
     { title: "That's it", mood: 'happy',
       text: 'Everything stays on this phone. No account, no internet. Tap me anytime for a thought.' },
   ];
@@ -1376,7 +1712,7 @@ function tutorial(replay = false) {
       TEMPLATES.filter(t => chosen.has(t.name)).forEach(t =>
         S.accounts.push({ id: uid(), name: t.name, icon: t.icon, color: t.color, goal: 0, createdAt: now }));
     }
-    S.settings.tutorialDone = true;
+    P.prefs.tutorialDone = true;
     e && e.destroy();
     el.remove();
     commit();
@@ -1411,22 +1747,27 @@ function tutorial(replay = false) {
 
 // ---------- theme + boot ----------
 function applyTheme() {
-  const t = S.settings.theme;
+  const t = P.prefs.theme;
   if (t === 'auto') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.dataset.theme = t;
 }
 
 function greet() {
-  if (!S.accounts.length) return;
+  if (!S.accounts.length || modeGreet()) return;
   const hr = new Date().getHours();
   const hi = hr < 5 ? 'Up late?' : hr < 12 ? 'Morning!' : hr < 18 ? 'Hey there.' : 'Evening.';
   setTimeout(() => react(`${hi} You've got ${fmt(valueOf(null, 'all'))} stashed.`, 'happy', 4000), 600);
 }
 
-applyTheme();
-route();
-if (!S.settings.tutorialDone) tutorial();
-else greet();
+// Boot once every script (book.js, coach.js) has loaded.
+addEventListener('DOMContentLoaded', () => {
+  applyTheme();
+  applyMode();
+  checkMilestones(false);
+  route();
+  if (!P.prefs.tutorialDone) tutorial();
+  else greet();
+});
 
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 // The APK already ships its files; a service worker there would only serve stale copies after updates.

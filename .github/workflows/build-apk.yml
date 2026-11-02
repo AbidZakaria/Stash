@@ -42,7 +42,7 @@ jobs:
       - name: Collect web files
         run: |
           mkdir -p www
-          cp -r index.html styles.css app.js manifest.webmanifest sw.js icons www/
+          cp -r index.html styles.css app.js book.js coach.js manifest.webmanifest sw.js icons www/
 
       - name: Create Android project
         run: |

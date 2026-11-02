@@ -1,7 +1,7 @@
 // Caches the app shell so PocketStash opens with no connection at all.
-const CACHE = 'pocketstash-v1';
+const CACHE = 'pocketstash-v2';
 const FILES = [
-  './', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'app.js', 'book.js', 'coach.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
